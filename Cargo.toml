@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "examples/basic_gr_citrus",
+    "src/r3_port_rx",
+]
+
+
+[profile.release]
+debug = true
+# FIXME: `OptLevel::Size` is currently mapped to `OptiminzationLevel::Limited`
+# <https://github.com/rust-lang/rustc_codegen_gcc/blob/341b9f274bddcb912a6109c57ee236f3c9529649/src/lib.rs#L275>
+# opt-level = "s"
+# FIXME: LTO is unsupported <https://github.com/rust-lang/rustc_codegen_gcc/issues/64>
+# lto = true
+codegen-units = 1

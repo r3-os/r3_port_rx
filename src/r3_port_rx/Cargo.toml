@@ -1,0 +1,21 @@
+[package]
+name = "r3_port_rx"
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Renesas RX port for the R3-OS original kernel"
+categories = ["embedded", "no-std"]
+keywords = ["r3", "rx"]
+repository = "https://github.com/r3-os/r3_port_rx"
+publish = false  # not ready yet
+
+[features]
+preload-registers = []
+
+doc = []
+
+[dependencies]
+r3_portkit = { version = "0.2.1" }
+r3_kernel = { version = "0.1.2" }
+r3_core = { version = "0.1.2" }
+

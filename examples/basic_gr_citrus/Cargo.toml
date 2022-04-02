@@ -1,0 +1,10 @@
+[package]
+name = "r3_example_basic_gr_citrus"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+r3_port_rx = { path = "../../src/r3_port_rx" }
+r3_kernel = { version = "0.1", features = ["system_time"] }
+r3 = { version = "0.2" }
