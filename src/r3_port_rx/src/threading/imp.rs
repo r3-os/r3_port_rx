@@ -125,6 +125,7 @@ impl State {
         };
 
         // FIXME: Work-around for DCE not honoring `sym` operands
+        //        <https://github.com/rust-lang/rustc_codegen_gcc/issues/157>
         unsafe {
             DUMMY = Self::push_second_level_state_and_dispatch::<Traits> as usize
                 + Self::idle_task::<Traits> as usize
