@@ -311,8 +311,7 @@ impl State {
                 cmp #0, r0
                 beq 0f
 
-                #   r1 = &running_task;
-                #   r2 = running_task;
+                #   r1 = running_task;
                 mov #_{RUNNING_TASK_PTR}, r1
                 mov [r1], r1
 
