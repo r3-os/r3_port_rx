@@ -473,7 +473,7 @@ impl State {
 
     #[inline(always)]
     pub fn is_cpu_lock_active<Traits: PortInstance>(&self) -> bool {
-        (psw::read() & psw::IPL_MASK) == 15
+        (psw::read() & psw::IPL_MASK) != 0
     }
 
     pub fn is_task_context<Traits: PortInstance>(&self) -> bool {
