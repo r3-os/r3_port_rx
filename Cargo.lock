@@ -152,6 +152,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "r3_example_basic_qemu_rx"
+version = "0.0.0"
+dependencies = [
+ "r3",
+ "r3_kernel",
+ "r3_port_rx",
+]
+
+[[package]]
 name = "r3_kernel"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

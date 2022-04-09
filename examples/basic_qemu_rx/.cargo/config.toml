@@ -1,0 +1,5 @@
+[target.rx-none-elf]
+rustflags = [
+    "-Clink-arg=-Tmemory.ld",
+    "-Cllvm-args=-mcpu=rx600 -Wa,-mcpu=rx600",
+]
