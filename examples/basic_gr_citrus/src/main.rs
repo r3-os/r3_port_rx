@@ -61,11 +61,13 @@ unsafe extern "C" fn main() -> ! {
 // FIXME: Why does `core::intrinsics::const_eval_select::<(&str, usize, usize),
 // core::str::slice_error_fail_ct, core::str::slice_error_fail_rt, !>` contain
 // a reference to this symbol?
-core::arch::global_asm!("
+core::arch::global_asm!(
+    "
     .global _abort
 _abort:
     bra _abort
-");
+"
+);
 
 // Panic handler
 // -----------------------------------------------------------------------
@@ -106,13 +108,8 @@ impl r3_kernel::PortTimer for SystemTraits {
 // -----------------------------------------------------------------------
 
 use r3::{kernel::StaticTask, prelude::*};
-
-/// Port direction register
-const PORTA_PDR: *mut u8 = 0x0008C00A as *mut u8;
-/// Port mode register
-const PORTA_PMR: *mut u8 = 0x0008C06A as *mut u8;
-/// Port output data register
-const PORTA_PODR: *mut u8 = 0x0008C02A as *mut u8;
+use rsrx::devices::rx63n as device;
+use tock_registers::interfaces::ReadWriteable;
 
 const _: Objects = r3_kernel::build!(SystemTraits, configure_app => Objects);
 
@@ -132,18 +129,24 @@ const fn configure_app(b: &mut r3_kernel::Cfg<SystemTraits>) -> Objects {
 
 #[no_mangle]
 fn task1_body() {
-    unsafe {
-        // Use PA0 (LED on GR-CITRUS) as a GPIO port
-        PORTA_PMR.write_volatile(PORTA_PMR.read_volatile() & !0b00000001);
-        // Use PA0 as an output port
-        PORTA_PDR.write_volatile(PORTA_PDR.read_volatile() | 0b00000001);
-    }
+    let device::Peripherals { PORTS, .. } = unsafe { device::Peripherals::steal() };
+
+    // Use PA0 (LED on GR-CITRUS) as a GPIO output port
+    PORTS
+        .porta_pmr
+        .modify(device::ports::RouteToPeripheral::B0::Disable);
+    PORTS.porta_pdr.modify(device::ports::Direction::B0::Output);
+
+    let mut state = false;
 
     loop {
-        unsafe {
-            // Toggle PA0
-            PORTA_PODR.write_volatile(PORTA_PODR.read_volatile() ^ 0b00000001);
-        }
+        // Toggle PA0
+        state = !state;
+        PORTS.porta_podr.modify(if state {
+            device::ports::Data::B0::SET
+        } else {
+            device::ports::Data::B0::CLEAR
+        });
 
         // Wait for a bit
         for _ in 0..5 * 1024 * 1024 {

@@ -149,6 +149,7 @@ const fn configure_app(b: &mut r3_kernel::Cfg<SystemTraits>) -> Objects {
 
 #[no_mangle]
 fn task1_body() {
+    // TODO: Remove the blinker because it is pointless in QEMU
     unsafe {
         // Use PA0 (LED on GR-CITRUS) as a GPIO port
         PORTA_PMR.write_volatile(PORTA_PMR.read_volatile() & !0b00000001);

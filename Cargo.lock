@@ -149,6 +149,8 @@ dependencies = [
  "r3",
  "r3_kernel",
  "r3_port_rx",
+ "rsrx",
+ "tock-registers",
 ]
 
 [[package]]
