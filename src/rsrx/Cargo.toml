@@ -1,0 +1,15 @@
+[package]
+name = "rsrx"
+description = "PAC for Renesas RX microcontrollers"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[features]
+rx62n = []
+rx63n = []
+
+doc = []
+
+[dependencies]
+tock-registers = "0.7.0"

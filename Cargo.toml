@@ -3,6 +3,7 @@ members = [
     "examples/basic_gr_citrus",
     "examples/basic_qemu_rx",
     "src/r3_port_rx",
+    "src/rsrx",
 ]
 
 
