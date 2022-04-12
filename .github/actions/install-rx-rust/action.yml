@@ -1,0 +1,58 @@
+name: install-rx-rust
+description: Install GNU RX toolchain and Rust GCC codegen plugin
+runs:
+  using: composite
+  steps:
+    - name: Download pre-built GNU RX toolchain
+      uses: dawidd6/action-download-artifact@v2
+      with:
+        repo: r3-os/rx-gcc
+        # FIXME: Workflow search gives no results - possible GH-side issue?
+        # <https://github.com/dawidd6/action-download-artifact/issues/147>
+        # branch: main
+        run_id: 2154570595
+        search_artifacts: true
+        workflow: main.yml
+        name: rx-none-elf-x86_64-linux
+        path: /tmp/install-rx-rust
+
+    - name: Extract GNU RX toolchain
+      shell: bash
+      run: |
+        prefix_name="$(basename "$(tar -tJf "/tmp/install-rx-rust/"* 2> /dev/null | head -1)")"
+
+        mkdir -p "rx-gcc" && cd "rx-gcc"
+        tar -xJf "/tmp/install-rx-rust/"*
+        rm -rf "/tmp/install-rx-rust"
+
+        echo "$(pwd)/$prefix_name/bin" >> $GITHUB_PATH
+        echo "rx_gcc_prefix=$(pwd)/$prefix_name" >> $GITHUB_ENV
+
+    - name: Checkout Rust GCC codegen plugin for RX
+      uses: actions/checkout@v3
+      with:
+        repository: yvt/rustc_codegen_gcc
+        ref: rx/v5
+        path: rustc_codegen_gcc
+
+    - name: Build Rust GCC codegen plugin for RX
+      shell: bash
+      run: |
+        # It must be moved outside `$GITHUB_WORKSPACE` to avoid nested Cargo
+        # workspaces, which Cargo doesn't like.
+        mv "rustc_codegen_gcc" "../"
+        cd "../rustc_codegen_gcc"
+        echo "$rx_gcc_prefix/lib" > gcc_path
+        ./prepare_build.sh
+        ./build.sh --release-sysroot
+
+    - name: Install Cargo wrapper
+      shell: bash
+      run: |
+        mkdir rustc_codegen_gcc-wrapper && cd rustc_codegen_gcc-wrapper
+        echo > rx-cargo <<EOF
+        #!/bin/sh
+        exec "$GITHUB_WORKSPACE/rustc_codegen_gcc/cargo.sh" "$@"
+        EOF
+        chmod +x rx-cargo
+        echo "$(pwd)" >> $GITHUB_PATH

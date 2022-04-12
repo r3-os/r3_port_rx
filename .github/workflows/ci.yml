@@ -1,0 +1,113 @@
+name: CI
+on:
+  pull_request:
+  push:
+
+jobs:
+  # Do a quick check before proceeding to full tests
+  check:
+    name: Quick check
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          components: clippy, rustfmt
+
+      - name: Install Tagref
+        uses: ./.github/actions/install-tagref
+
+      - name: Allow `incomplete_features`
+        run: |
+          echo "RUSTFLAGS=-A incomplete_features" >> $GITHUB_ENV
+
+      - name: Exclude crates
+        run: |
+          # Example crates will fail to compile unless an appropriate target
+          # triple is provided.
+          sed -E -i.bak 's/.*examples.*//' Cargo.toml
+
+      - name: Check cross-references with Tagref
+        run: tagref
+
+      - name: Clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --workspace --all-features
+
+  # Run tests on the host system
+  test-hosted:
+    name: Test
+    needs: check
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+
+      - name: Allow `incomplete_features`
+        run: |
+          echo "RUSTFLAGS=-A incomplete_features" >> $GITHUB_ENV
+
+      - name: Exclude crates
+        shell: bash
+        run: |
+          sed -E -i.bak 's/.*examples.*//' Cargo.toml
+
+      - name: Test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace -- ${{ env.testflags }}
+        env:
+          RUST_LOG: debug
+
+  # Run tests on emulated freestanding targets and build examples
+  test-freestanding:
+    name: Test
+    needs: check
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [rx]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+
+      - name: Allow `incomplete_features`
+        run: |
+          echo "RUSTFLAGS=-A incomplete_features" >> $GITHUB_ENV
+
+      - uses: ./.github/actions/install-rx-rust
+
+      - name: Build examples
+        run: |
+          for x in examples/*; do
+            pushd $x
+            rx-cargo build --release
+            popd
+          done
+
+      # TODO: run tests in QEMU
