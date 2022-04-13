@@ -26,6 +26,10 @@ pub trait ThreadingOptions {
     /// Enables the use of the `wait` instruction in the idle task to save power.
     /// Defaults to `true`.
     const USE_WAIT: bool = true;
+
+    /// The base address of the memory-mapped registers exposed by Interrupt
+    /// Control Unit (ICUa or compatible). The default value is `0x0008_7000`.
+    const ICU_BASE: *mut () = 0x0008_7000 as _;
 }
 
 /// Defines the entry points of a port instantiation. Implemented by
@@ -75,10 +79,15 @@ pub unsafe trait EntryPoint {
 /// # Safety
 ///
 ///  - The target must really be a bare-metal RX environment.
+///
 ///  - You shouldn't interfere with the port's operrations. For example, you
 ///    shouldn't manually modify `IPL` or `INTB` unless you know what you are
 ///    doing.
 ///  - Other components should not execute the `int` instruction.
+///
+///  - [`ThreadingOptions::ICU_BASE`][] must be the valid base address of
+///    Interrupt Control Unit (ICU). Application code shouldn't interfere with
+///    the port's interaction with ICU.
 ///
 #[macro_export]
 macro_rules! use_port {

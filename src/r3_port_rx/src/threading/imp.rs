@@ -8,8 +8,13 @@ use r3_core::{
 };
 use r3_kernel::{KernelTraits, Port, PortToKernel, System, TaskCb};
 use r3_portkit::pptext::pp_asm;
+use rsrx::icua;
+use tock_registers::{
+    fields::FieldValue,
+    interfaces::{ReadWriteable, Readable, Writeable},
+};
 
-use crate::ThreadingOptions;
+use crate::{ThreadingOptions, INTERRUPT_NUM_RANGE, INTERRUPT_PRIORITY_RANGE};
 
 /// Implemented on a kernel trait type by [`use_port!`].
 ///
@@ -23,6 +28,17 @@ pub unsafe trait PortInstance:
 }
 
 pub mod ivt;
+
+trait PortInstanceExt: PortInstance {
+    #[inline(always)]
+    fn icu() -> &'static icua::Registers {
+        unsafe { &*(Self::ICU_BASE as *const icua::Registers) }
+    }
+}
+impl<T: PortInstance> PortInstanceExt for T {}
+
+/// Software interrupt line (pended by `ICU.SWINTR`)
+const INT_SWINT: InterruptNum = 27;
 
 /// Stores the value of `Traits::state().running_task_ptr()` so that it can
 /// be accessed in naked functions. This field is actually of type
@@ -621,7 +637,12 @@ impl State {
         num: InterruptNum,
         priority: InterruptPriority,
     ) -> Result<(), SetInterruptLinePriorityError> {
-        todo!()
+        if !INTERRUPT_PRIORITY_RANGE.contains(&priority) || !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(SetInterruptLinePriorityError::BadParam)
+        } else {
+            Traits::icu().ipr[num].set(priority as u8);
+            Ok(())
+        }
     }
 
     #[inline]
@@ -629,7 +650,12 @@ impl State {
         &'static self,
         num: InterruptNum,
     ) -> Result<(), EnableInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(EnableInterruptLineError::BadParam)
+        } else {
+            Traits::icu().ier[num / 8].modify(FieldValue::<u8, _>::new(1, num % 8, 1));
+            Ok(())
+        }
     }
 
     #[inline]
@@ -637,7 +663,12 @@ impl State {
         &self,
         num: InterruptNum,
     ) -> Result<(), EnableInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(EnableInterruptLineError::BadParam)
+        } else {
+            Traits::icu().ier[num / 8].modify(FieldValue::<u8, _>::new(1, num % 8, 0));
+            Ok(())
+        }
     }
 
     #[inline]
@@ -645,7 +676,14 @@ impl State {
         &'static self,
         num: InterruptNum,
     ) -> Result<(), PendInterruptLineError> {
-        todo!()
+        if num == INT_SWINT {
+            Traits::icu()
+                .swintr
+                .write(icua::SoftwareInterruptActivation::SWINT::SET);
+            Ok(())
+        } else {
+            Err(PendInterruptLineError::BadParam)
+        }
     }
 
     #[inline]
@@ -653,7 +691,12 @@ impl State {
         &self,
         num: InterruptNum,
     ) -> Result<(), ClearInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(ClearInterruptLineError::BadParam)
+        } else {
+            Traits::icu().ir[num].set(1);
+            Ok(())
+        }
     }
 
     #[inline]
@@ -661,7 +704,16 @@ impl State {
         &self,
         num: InterruptNum,
     ) -> Result<bool, QueryInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(QueryInterruptLineError::BadParam)
+        } else {
+            match Traits::icu().ir[num].get() {
+                0 => Ok(false),
+                1 => Ok(true),
+                // Safety: `IR[1..8]` is guaranteed to read as zeros
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+        }
     }
 }
 

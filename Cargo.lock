@@ -187,7 +187,9 @@ dependencies = [
  "r3_core",
  "r3_kernel",
  "r3_portkit",
+ "rsrx",
  "seq-macro",
+ "tock-registers",
 ]
 
 [[package]]
