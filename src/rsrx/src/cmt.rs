@@ -37,7 +37,7 @@ register_bitfields![u16,
         CKS OFFSET(0) NUMBITS(2) [
             PclkDividedBy8 = 0,
             PclkDividedBy32 = 1,
-            PclkDividedB3128 = 2,
+            PclkDividedBy128 = 2,
             PclkDividedBy512 = 3,
         ],
         /// Compare match interrupt enable
