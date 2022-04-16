@@ -2,7 +2,7 @@ use core::{cell::UnsafeCell, mem::MaybeUninit, slice};
 use r3_core::{
     kernel::{
         traits, ClearInterruptLineError, EnableInterruptLineError, InterruptNum, InterruptPriority,
-        PendInterruptLineError, QueryInterruptLineError, SetInterruptLinePriorityError,
+        PendInterruptLineError, QueryInterruptLineError,
     },
     utils::Init,
 };
@@ -14,7 +14,10 @@ use tock_registers::{
     interfaces::{ReadWriteable, Readable, Writeable},
 };
 
-use crate::{ThreadingOptions, Timer, INTERRUPT_NUM_RANGE, INTERRUPT_PRIORITY_RANGE};
+use crate::{
+    SetInterruptGroupPriorityError, ThreadingOptions, Timer, INTERRUPT_NUM_RANGE,
+    INTERRUPT_PRIORITY_RANGE,
+};
 
 /// Implemented on a kernel trait type by [`use_port!`].
 ///
@@ -25,6 +28,15 @@ pub unsafe trait PortInstance:
     KernelTraits + Port<PortTaskState = TaskState> + ThreadingOptions + Timer
 {
     const IVT: ivt::Table = ivt::new_table::<Self>();
+    const ALL_INTERRUPT_LINES: [InterruptNum; 256] = {
+        let mut x = [0; 256];
+        let mut i = 0;
+        while i < 256 {
+            x[i] = i as InterruptNum;
+            i += 1;
+        }
+        x
+    };
 }
 
 pub mod ivt;
@@ -635,19 +647,6 @@ impl State {
         }
     }
 
-    pub fn set_interrupt_line_priority<Traits: PortInstance>(
-        &'static self,
-        num: InterruptNum,
-        priority: InterruptPriority,
-    ) -> Result<(), SetInterruptLinePriorityError> {
-        if !INTERRUPT_PRIORITY_RANGE.contains(&priority) || !INTERRUPT_NUM_RANGE.contains(&num) {
-            Err(SetInterruptLinePriorityError::BadParam)
-        } else {
-            Traits::icu().ipr[num].set(priority as u8);
-            Ok(())
-        }
-    }
-
     #[inline]
     pub fn enable_interrupt_line<Traits: PortInstance>(
         &'static self,
@@ -733,4 +732,28 @@ pub const fn validate<Traits: PortInstance>() {
         !Traits::SUPPORT_NESTING,
         "nested interrupts aren't supported yet"
     );
+}
+
+unsafe impl<Traits: PortInstance> super::cfg::Icu for Traits {
+    fn set_interrupt_group_priority(
+        num: usize,
+        priority: InterruptPriority,
+    ) -> Result<(), SetInterruptGroupPriorityError> {
+        let ipr = Self::icu()
+            .ipr
+            .get(num)
+            .ok_or(SetInterruptGroupPriorityError::BadParam)?;
+
+        if !INTERRUPT_PRIORITY_RANGE.contains(&priority) {
+            return Err(SetInterruptGroupPriorityError::BadParam);
+        }
+
+        if Traits::is_interrupt_context() {
+            return Err(SetInterruptGroupPriorityError::BadContext);
+        }
+
+        ipr.set(priority as u8);
+
+        Ok(())
+    }
 }

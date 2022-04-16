@@ -87,7 +87,8 @@ macro_rules! use_cmt {
             impl $Traits {
                 pub const fn configure_timer<C>(b: &mut Cfg<C>)
                 where
-                    C: ~const traits::CfgInterruptLine<System = System<Self>>,
+                    C: ~const traits::CfgBase<System = System<Self>>
+                        + ~const traits::CfgInterruptLine,
                 {
                     cmt::imp::configure(b);
                 }
@@ -132,6 +133,10 @@ pub trait CmtOptions {
     /// The interrupt number of the first channel of the specified CMT instance.
     /// Defaults to `28` (CMT0).
     const INTERRUPT_NUM: InterruptNum = 28;
+
+    /// The IPR register used to set the specified interrupt line's
+    /// priority. Defaults to `Some(4)`.
+    const IPR_INDEX: Option<usize> = Some(4);
 
     /// The interrupt priority. Defaults to `4`.
     const INTERRUPT_PRIORITY: InterruptPriority = 4;

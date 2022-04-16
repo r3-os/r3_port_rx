@@ -1,6 +1,6 @@
 //! The implementation of the timer driver based on Compare Match Timer (CMT).
 use r3_core::{
-    kernel::{traits, Cfg, InterruptLine, StaticInterruptHandler},
+    kernel::{traits, Cfg, InterruptLine, StartupHook, StaticInterruptHandler},
     utils::Init,
 };
 use r3_kernel::{KernelTraits, PortToKernel, System, UTicks};
@@ -11,14 +11,14 @@ use tock_registers::{
     interfaces::{ReadWriteable, Readable, Writeable},
 };
 
-use crate::cmt::cfg::CmtOptions;
+use crate::{cmt::cfg::CmtOptions, Icu};
 
 /// Implemented on a kernel trait type by [`use_cmt!`].
 ///
 /// # Safety
 ///
 /// Only meant to be implemented by [`use_cmt!`].
-pub unsafe trait TimerInstance: KernelTraits + CmtOptions {
+pub unsafe trait TimerInstance: KernelTraits + CmtOptions + Icu {
     const TICKLESS_CFG: TicklessCfg = match TicklessCfg::new(TicklessOptions {
         hw_freq_num: <Self as CmtOptions>::FREQUENCY,
         hw_freq_denom: <Self as CmtOptions>::FREQUENCY_DENOMINATOR
@@ -76,17 +76,28 @@ impl<TicklessState: Init> Init for TimerState<TicklessState> {
 /// The configuration function.
 pub const fn configure<C, Traits: TimerInstance>(b: &mut Cfg<C>)
 where
-    C: ~const traits::CfgInterruptLine<System = System<Traits>>,
+    C: ~const traits::CfgBase<System = System<Traits>> + ~const traits::CfgInterruptLine,
 {
     InterruptLine::define()
         .line(Traits::INTERRUPT_NUM)
-        .priority(Traits::INTERRUPT_PRIORITY)
         .enabled(true)
         .finish(b);
     StaticInterruptHandler::define()
         .line(Traits::INTERRUPT_NUM)
         .start(handle_tick::<Traits>)
         .finish(b);
+
+    if <Traits as CmtOptions>::IPR_INDEX.is_some() {
+        StartupHook::define()
+            .start(|| {
+                Traits::set_interrupt_group_priority(
+                    <Traits as CmtOptions>::IPR_INDEX.unwrap(),
+                    <Traits as CmtOptions>::INTERRUPT_PRIORITY,
+                )
+                .unwrap()
+            })
+            .finish(b);
+    }
 }
 
 /// Implements [`crate::Timer::init`]

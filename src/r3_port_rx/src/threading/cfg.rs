@@ -1,9 +1,12 @@
-use core::ops::Range;
-use r3_core::kernel::{InterruptNum, InterruptPriority};
+use core::{fmt, ops::Range};
+use r3_core::kernel::{InterruptNum, InterruptPriority, ResultCode};
 
 // TODO: "Fast interrupts"
-/// The valid interrupt priority values.
-pub const INTERRUPT_PRIORITY_RANGE: Range<InterruptPriority> = 1..16;
+/// The valid interrupt group priority values.
+///
+/// Note that the value `0` (lowest) disables interrupts unless the
+/// corresponding interrupt line is designated as "fast interrupts".
+pub const INTERRUPT_PRIORITY_RANGE: Range<InterruptPriority> = 0..16;
 
 /// The range of valid `InterruptNum`s.
 pub const INTERRUPT_NUM_RANGE: Range<InterruptNum> = 16..256;
@@ -63,6 +66,59 @@ pub unsafe trait EntryPoint {
     ///
     /// [`CPU_LOCK_PRIORITY_MASK`]: ThreadingOptions::CPU_LOCK_PRIORITY_MASK
     unsafe fn start() -> !;
+}
+
+/// Provides access to a system-global ICU instance. Indirectly implemented by
+/// [`use_port!`].
+///
+/// # Safety
+///
+/// This trait is not intended to be implemented in any other means.
+pub unsafe trait Icu {
+    fn set_interrupt_group_priority(
+        num: usize,
+        priority: InterruptPriority,
+    ) -> Result<(), SetInterruptGroupPriorityError>;
+}
+
+/// Error type for [`Icu::set_interrupt_group_priority`][].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(i8)]
+pub enum SetInterruptGroupPriorityError {
+    /// The current context is not a task or boot context.
+    ///
+    /// <div class="admonition-follows"></div>
+    ///
+    /// > **Rationale:** When taking an interrupt, the hardware interrupt
+    /// > handling sequence updates `IPL` to mask lower-priority interrupts.
+    /// > After handling an interrupt, the interrupt handler must update `IPL`
+    /// > according to the configured priority levels of all remaining active
+    /// > interrupts.
+    /// > With fixed interrupt priorities, calculating the new value of `IPL`
+    /// > becomes as trivial as restoring the old value of `IPL` from the
+    /// > exception frame.
+    // TODO: #[doc = include_str!("../common.md")]
+    BadContext = ResultCode::BadContext as _,
+    /// The specified interrupt group number or the specified priority value is
+    /// out of range.
+    BadParam = ResultCode::BadParam as _,
+}
+
+impl From<SetInterruptGroupPriorityError> for ResultCode {
+    #[inline]
+    fn from(x: SetInterruptGroupPriorityError) -> Self {
+        match x {
+            SetInterruptGroupPriorityError::BadContext => Self::BadContext,
+            SetInterruptGroupPriorityError::BadParam => Self::BadParam,
+        }
+    }
+}
+
+impl fmt::Debug for SetInterruptGroupPriorityError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        ResultCode::from(*self).fmt(f)
+    }
 }
 
 /// Instantiate the port. Implements the port traits ([`PortThreading`], etc.)
@@ -185,15 +241,8 @@ macro_rules! use_port {
             }
 
             unsafe impl PortInterrupts for $Traits {
-                const MANAGED_INTERRUPT_PRIORITY_RANGE: Range<InterruptPriority> =
-                    0..(<$Traits as ThreadingOptions>::CPU_LOCK_PRIORITY_MASK as InterruptPriority + 1);
-
-                unsafe fn set_interrupt_line_priority(
-                    line: InterruptNum,
-                    priority: InterruptPriority,
-                ) -> Result<(), SetInterruptLinePriorityError> {
-                    PORT_STATE.set_interrupt_line_priority::<Self>(line, priority)
-                }
+                const MANAGED_INTERRUPT_LINES: &'static [InterruptNum] =
+                    &<$Traits as PortInstance>::ALL_INTERRUPT_LINES;
 
                 unsafe fn enable_interrupt_line(line: InterruptNum) -> Result<(), EnableInterruptLineError> {
                     PORT_STATE.enable_interrupt_line::<Self>(line)
