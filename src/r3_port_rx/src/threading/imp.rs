@@ -341,6 +341,7 @@ impl State {
                 #   r1 = running_task;
                 mov #_{RUNNING_TASK_PTR}, r1
                 mov [r1], r1
+                mov [r1], r1
 
                 # Push the second-level context state.
                 # TODO: RXv1 lacks `mvfaclo`
