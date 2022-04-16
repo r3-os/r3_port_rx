@@ -184,7 +184,7 @@ macro_rules! use_port {
                 const PORT_TASK_STATE_INIT: Self::PortTaskState =
                     $crate::r3_core::utils::Init::INIT;
 
-                const STACK_DEFAULT_SIZE: usize = 1024;
+                const STACK_DEFAULT_SIZE: usize = 2048;
 
                 // FIXME: Couldn't find any description on the stack alignment requirement
                 const STACK_ALIGN: usize = 4;
