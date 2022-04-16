@@ -86,28 +86,13 @@ use r3_port_rx as port;
 
 type System = r3_kernel::System<SystemTraits>;
 port::use_port!(unsafe struct SystemTraits);
+port::use_cmt!(unsafe impl PortTimer for SystemTraits);
 
 impl port::ThreadingOptions for SystemTraits {}
 
-impl port::Timer for SystemTraits {
-    unsafe fn init() {}
-}
-
-impl r3_kernel::PortTimer for SystemTraits {
-    const MAX_TICK_COUNT: r3_kernel::UTicks = u32::MAX;
-    const MAX_TIMEOUT: r3_kernel::UTicks = u32::MAX;
-
-    unsafe fn tick_count() -> r3_kernel::UTicks {
-        0 // TODO
-    }
-
-    unsafe fn pend_tick() {
-        // TODO
-    }
-
-    unsafe fn pend_tick_after(_tick_count_delta: r3_kernel::UTicks) {
-        // TODO
-    }
+impl port::CmtOptions for SystemTraits {
+    const FREQUENCY: u64 = 96_000_000;
+    const PREDIVIDER: u64 = 32;
 }
 
 // Application code
@@ -123,6 +108,7 @@ struct Objects {}
 
 const fn configure_app(b: &mut r3_kernel::Cfg<SystemTraits>) -> Objects {
     b.num_task_priority_levels(4);
+    SystemTraits::configure_timer(b);
 
     StaticTask::define()
         .start(task1_body)
@@ -154,11 +140,6 @@ fn task1_body() {
             device::ports::Data::B0::CLEAR
         });
 
-        // Wait for a bit
-        for _ in 0..5 * 1024 * 1024 {
-            unsafe { core::arch::asm!("") };
-        }
-        // TODO: `PortTimer` is still unimplemented
-        // System::sleep(r3::time::Duration::from_millis(200)).unwrap();
+        System::sleep(r3::time::Duration::from_millis(200)).unwrap();
     }
 }
