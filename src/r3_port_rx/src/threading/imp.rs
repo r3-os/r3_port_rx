@@ -19,7 +19,10 @@ use crate::ThreadingOptions;
 pub unsafe trait PortInstance:
     KernelTraits + Port<PortTaskState = TaskState> + ThreadingOptions
 {
+    const IVT: ivt::Table = ivt::new_table::<Self>();
 }
+
+pub mod ivt;
 
 /// Stores the value of `Traits::state().running_task_ptr()` so that it can
 /// be accessed in naked functions. This field is actually of type
@@ -30,16 +33,6 @@ pub unsafe trait PortInstance:
 static mut RUNNING_TASK_PTR: usize = 0;
 
 static mut DISPATCH_PENDING: bool = false;
-
-#[export_name = "r3_port_rx_INTERRUPTS"]
-static INTERRUPTS: [unsafe extern "C" fn(); 256] = {
-    // TODO
-    #[naked]
-    unsafe extern "C" fn noop_int_handler() {
-        unsafe { pp_asm!("rte", options(noreturn)) };
-    }
-    [noop_int_handler; 256]
-};
 
 #[used]
 static mut DUMMY: usize = 0;
@@ -130,7 +123,9 @@ impl State {
             DUMMY = Self::push_second_level_state_and_dispatch::<Traits> as usize
                 + Self::idle_task::<Traits> as usize
                 + Self::choose_and_get_next_task::<Traits> as usize
-                + Self::yield_cpu_inner::<Traits> as usize;
+                + Self::yield_cpu_inner::<Traits> as usize
+                + Self::zl_handler_stage2::<Traits> as usize
+                + ivt::keep_handlers::<Traits>();
         }
 
         // Safety: We are a port, so it's okay to call this
@@ -492,6 +487,135 @@ impl State {
         unsafe { RUNNING_TASK_PTR != 0 }
     }
 
+    /// The zeroth-level, second-stage interrupt handler.
+    ///
+    /// # Safety
+    ///
+    /// - `PSW.U == 0` (ISP selected)
+    /// - `PSW.I == 0` (interrupts disabled)
+    /// - `PSW.PM == 0`
+    /// - `fl_handler` == `*isp[0]` contains a pointer to a first-level interrupt handler.
+    /// - `saved_pc` == `isp[1]` contains the return target.
+    /// - `saved_psw` == `isp[2]` contains the saved PSW.
+    ///
+    #[naked]
+    unsafe extern "C" fn zl_handler_stage2<Traits: PortInstance>() -> ! {
+        unsafe {
+            pp_asm!(
+                "
+                # [ref:rx_no_nested_interrupts] implies the background context
+                # is always a task context (`saved_psw.U == 1`).
+                #
+                # Set `PSW.U` to examine `usp` and determine if the background
+                # context is an idle task. If so, skip the stacking of FLS.
+                #
+                #   if usp == 0:
+                #       <running_task is None>
+                #       goto FLSSaved
+                #
+                #   <running_task is Some(_)>
+                #
+                setpsw u
+                cmp #0, r0
+                beq 0f
+
+                # Save the FLS except for `(pc, psw)` to the task stack.
+                sub #8, r0
+                pushm r14-r15
+                pushm r1-r5
+                pushc fpsw
+
+            0:      # FLSSaved
+                # Switch back to `isp`.
+                clrpsw u
+
+                # Get the first-level interrupt handler.
+                #
+                #   let fl_handler = *isp[0];
+                #   isp += 1;
+                #
+                pop r1
+                mov [r1], r1
+
+                # Call the first-level interrupt handler.
+                #
+                #   <interrupt context && CPU Lock inactive>
+                #   fl_handler();
+                #
+                jsr r1
+
+                # [ref:rx_no_nested_interrupts] again implies the background
+                # context is always a task context (`saved_psw.U == 1`).
+                #
+                # [ref:flexible_unmanaged_interrupts] implies this is a managed
+                # interrupt handler, and thus it's always possible that it may
+                # set `DISPATCH_PENDING`.
+                #
+                # Is there a pending dispatch request?
+                #
+                #   if replace(&mut DISPATCH_PENDING, false) == false:
+                #       goto ReturnToBackgroundContext
+                #
+                mov #_{DISPATCH_PENDING}, r1
+                mov #0, r2
+                cmp [r1].ub, r2
+                beq 1f
+
+                # There's a pending dispatch request. Clear the request.
+                mov.b r2, [r1]
+
+                # Get `(saved_pc, saved_psw)`.
+                popm r1-r2
+
+                # Complete the saved FLS by storing `(saved_pc, saved_psw)`
+                # if the background context is not an idle task.
+                #
+                #   if usp != 0:
+                #       <running_task is Some(_)>
+                #       fls.pc = saved_pc;
+                #       fls.psw = saved_psw;
+                #
+                setpsw u
+                cmp #0, r0
+                beq 2f
+                mov r1, (8 * 4)[r0]
+                mov r2, (9 * 4)[r0]
+
+            2:
+                # Enter a dispatcher context and jump to
+                # `push_second_level_state_and_dispatch`.
+                mvtipl #15
+                bra _{push_second_level_state_and_dispatch}
+
+            1:      # ReturnToBackgroundContext
+                # Restore the FLS from the task stack if the background context
+                # is not an idle task.
+                setpsw u
+                cmp #0, r0
+                beq 2f
+                popc fpsw
+                popm r1-r5
+                popm r14-r15
+                add #8, r0
+
+            2:
+                # Return to the background context.
+                #
+                #   pc = saved_pc;
+                #   psw = saved_psw;
+                #   isp += 2;
+                #
+                clrpsw u
+                rte
+                ",
+                DISPATCH_PENDING = sym DISPATCH_PENDING,
+                push_second_level_state_and_dispatch =
+                    sym Self::push_second_level_state_and_dispatch::<Traits>,
+                options(noreturn),
+            );
+        }
+    }
+
     pub fn set_interrupt_line_priority<Traits: PortInstance>(
         &'static self,
         num: InterruptNum,
@@ -549,7 +673,7 @@ pub const fn validate<Traits: PortInstance>() {
         "`CPU_LOCK_PRIORITY_MASK` having a value other than `15` is not supported yet"
     );
 
-    // [tag:rx_nested_interrupts]
+    // [tag:rx_no_nested_interrupts]
     assert!(
         !Traits::SUPPORT_NESTING,
         "nested interrupts aren't supported yet"

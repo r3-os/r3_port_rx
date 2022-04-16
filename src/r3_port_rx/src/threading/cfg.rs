@@ -102,6 +102,11 @@ macro_rules! use_port {
 
             static PORT_STATE: State = $crate::core::default::Default::default();
 
+            #[export_name = "r3_port_rx_INTERRUPTS"]
+            #[used]
+            static INTERRUPTS: $crate::threading::imp::ivt::Table =
+                <$Traits as PortInstance>::IVT;
+
             unsafe impl PortInstance for $Traits {}
 
             // Assume `$Traits: KernelTraits`

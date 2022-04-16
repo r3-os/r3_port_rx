@@ -83,7 +83,7 @@ The state of an interrupted thread is stored to the interrupted thread's stack i
 ```rust,ignore
 #[repr(C)]
 struct ContextState {
-    // Second-level state
+    // Second-level state (SLS)
     //
     // Includes everything that is not included in the first-level state. These
     // are moved between memory and registers only when switching tasks.
@@ -99,7 +99,7 @@ struct ContextState {
     r13: u32,
     // TODO: `dr: [f64; 16]`, DPSW, etc. (RXv3)
 
-    // First-level state
+    // First-level state (FLS)
     //
     // The GPR potion is comprised of caller-saved registers. In an exception
     // handler, saving/restoring this set of registers at entry and exit allows

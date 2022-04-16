@@ -8,6 +8,7 @@
 #![feature(slice_ptr_len)]
 #![feature(decl_macro)]
 #![feature(asm_const)]
+#![feature(fn_align)]
 #![feature(asm_sym)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(

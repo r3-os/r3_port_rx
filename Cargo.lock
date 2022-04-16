@@ -187,6 +187,7 @@ dependencies = [
  "r3_core",
  "r3_kernel",
  "r3_portkit",
+ "seq-macro",
 ]
 
 [[package]]
