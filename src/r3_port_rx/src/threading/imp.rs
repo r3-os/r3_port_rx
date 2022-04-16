@@ -72,7 +72,8 @@ mod psw {
     /// `PSW.U` - Stack pointer select bit
     pub const U: u32 = 1 << 17;
     /// `PSW.IPL` - Processor interrupt priority level
-    pub const IPL_MASK: u32 = 0b1111;
+    pub const IPL_MASK: u32 = 0b1111 << IPL_SHIFT;
+    pub const IPL_SHIFT: u32 = 24;
 
     // FIXME: Register operands aren't supported for cg_gcc + RX
     #[cfg(any())]
@@ -499,6 +500,8 @@ impl State {
 
     #[inline(always)]
     pub fn is_cpu_lock_active<Traits: PortInstance>(&self) -> bool {
+        // FIXME: The hardware interrupt entry sequence raises `IPL`, so this
+        // will return an incorrect value in an interupt handler
         (psw::read() & psw::IPL_MASK) != 0
     }
 
