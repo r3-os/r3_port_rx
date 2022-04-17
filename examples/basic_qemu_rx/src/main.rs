@@ -102,6 +102,10 @@ port::use_port!(unsafe struct SystemTraits);
 
 impl port::ThreadingOptions for SystemTraits {}
 
+impl port::Timer for SystemTraits {
+    unsafe fn init() {}
+}
+
 impl r3_kernel::PortTimer for SystemTraits {
     const MAX_TICK_COUNT: r3_kernel::UTicks = u32::MAX;
     const MAX_TIMEOUT: r3_kernel::UTicks = u32::MAX;

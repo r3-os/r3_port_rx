@@ -14,7 +14,7 @@ use tock_registers::{
     interfaces::{ReadWriteable, Readable, Writeable},
 };
 
-use crate::{ThreadingOptions, INTERRUPT_NUM_RANGE, INTERRUPT_PRIORITY_RANGE};
+use crate::{ThreadingOptions, Timer, INTERRUPT_NUM_RANGE, INTERRUPT_PRIORITY_RANGE};
 
 /// Implemented on a kernel trait type by [`use_port!`].
 ///
@@ -22,7 +22,7 @@ use crate::{ThreadingOptions, INTERRUPT_NUM_RANGE, INTERRUPT_PRIORITY_RANGE};
 ///
 /// Only meant to be implemented by [`use_port!`].
 pub unsafe trait PortInstance:
-    KernelTraits + Port<PortTaskState = TaskState> + ThreadingOptions
+    KernelTraits + Port<PortTaskState = TaskState> + ThreadingOptions + Timer
 {
     const IVT: ivt::Table = ivt::new_table::<Self>();
 }
@@ -143,6 +143,9 @@ impl State {
                 + Self::zl_handler_stage2::<Traits> as usize
                 + ivt::keep_handlers::<Traits>();
         }
+
+        // Safety: We are the port, so it's okay to call this
+        unsafe { <Traits as Timer>::init() };
 
         // Safety: We are a port, so it's okay to call this
         unsafe {

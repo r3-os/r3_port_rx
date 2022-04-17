@@ -6,6 +6,7 @@
 #![feature(naked_functions)]
 #![feature(const_mut_refs)]
 #![feature(slice_ptr_len)]
+#![feature(const_option)]
 #![feature(decl_macro)]
 #![feature(asm_const)]
 #![feature(fn_align)]
@@ -39,15 +40,15 @@ pub mod threading {
 //     pub mod imp;
 // }
 
-// TODO: Timer implementation
-// /// The tickful [`r3_kernel::PortTimer`] implementation based on SysTick.
-// #[doc(hidden)]
-// pub mod systick_tickful {
-//     pub mod cfg;
-//     #[cfg(target_os = "none")]
-//     pub mod imp;
-// }
+/// The tickless [`r3_kernel::PortTimer`] implementation based on CMT.
+#[doc(hidden)]
+pub mod cmt {
+    pub mod cfg;
+    #[cfg(target_os = "none")]
+    pub mod imp;
+}
 
+pub use self::cmt::cfg::*;
 pub use self::threading::cfg::*;
 
 /// Used by `use_port!`
@@ -60,3 +61,20 @@ pub extern crate r3_core;
 /// Used by `use_port!`
 #[doc(hidden)]
 pub extern crate r3_kernel;
+/// Used by `use_cmt!`
+#[doc(hidden)]
+pub extern crate r3_portkit;
+
+/// An abstract inferface to a port timer driver. Implemented by
+/// [`use_cmt!`][].
+pub trait Timer {
+    /// Initialize the driver. This will be called just before entering
+    /// [`PortToKernel::boot`].
+    ///
+    /// [`PortToKernel::boot`]: r3_kernel::PortToKernel::boot
+    ///
+    /// # Safety
+    ///
+    /// This is only intended to be called by the port.
+    unsafe fn init() {}
+}

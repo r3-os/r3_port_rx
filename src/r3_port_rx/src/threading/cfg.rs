@@ -67,6 +67,7 @@ pub unsafe trait EntryPoint {
 
 /// Instantiate the port. Implements the port traits ([`PortThreading`], etc.)
 /// and [`EntryPoint`].
+/// **Requires [`ThreadingOptions`][] and [`Timer`][].**
 ///
 /// This macro doesn't provide an implementation of [`PortTimer`], which you
 /// must supply one through other ways.
@@ -75,6 +76,8 @@ pub unsafe trait EntryPoint {
 ///
 /// [`PortThreading`]: r3_kernel::PortThreading
 /// [`PortTimer`]: r3_kernel::PortTimer
+/// [`Timer`]: r3_kernel::Timer
+/// [`Timer`]: r3_kernel::Timer
 ///
 /// # Safety
 ///
