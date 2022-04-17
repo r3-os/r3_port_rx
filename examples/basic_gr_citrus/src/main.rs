@@ -91,7 +91,7 @@ port::use_cmt!(unsafe impl PortTimer for SystemTraits);
 impl port::ThreadingOptions for SystemTraits {}
 
 impl port::CmtOptions for SystemTraits {
-    const FREQUENCY: u64 = 96_000_000;
+    const FREQUENCY: u64 = 48_000_000;
     const PREDIVIDER: u64 = 32;
 }
 
