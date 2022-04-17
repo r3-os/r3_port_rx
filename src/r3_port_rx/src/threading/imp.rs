@@ -66,6 +66,7 @@ static mut DISPATCH_PENDING: bool = false;
 static mut DUMMY: usize = 0;
 
 /// Processor Status Word
+#[allow(dead_code)]
 mod psw {
     /// `PSW.I` - Interrpt enable bit
     pub const I: u32 = 1 << 16;
@@ -205,10 +206,9 @@ impl State {
                 # Zero SP
                 mov #0, r0
 
-                # Transition to a task context
+                # Transition to a task context. Note that `wait` automatically
+                # sets `PSW.I`.
                 mvtipl #0
-                setpsw i
-
             0:
                 wait
                 bra 0b
@@ -253,15 +253,16 @@ impl State {
 
                 # If we are in an interrupt context, pend dispatch and return.
                 #
-                #   if PSW.I:
+                #   <PSW.IPL is 0 | 15>
+                #   if PSW.IPL == 15:
                 #       goto InInterruptContext
                 #
                 mvfc psw, r14
-                tst #{PSW_I}, r14
+                btst #{PSW_IPL_SHIFT}, r14
                 bne 0f
 
                 # Enter a dispatcher context
-                mvtipl #15
+                clrpsw i
 
                 # Push the rest of the first level context state.
                 pushm r1-r5
@@ -271,9 +272,8 @@ impl State {
 
             0:              # InInterruptContext
                 #
-                #   if PSW.I:
-                #       DISPATCH_PENDING = true
-                #       return
+                #   DISPATCH_PENDING = true
+                #   return
                 #
                 mov #_{DISPATCH_PENDING}, r14
                 mov.b #1, [r14]
@@ -281,7 +281,7 @@ impl State {
                 add #4, r0
                 rte
                 ",
-                PSW_I = const psw::I,
+                PSW_IPL_SHIFT = const psw::IPL_SHIFT,
                 DISPATCH_PENDING = sym DISPATCH_PENDING,
                 push_second_level_state_and_dispatch =
                     sym Self::push_second_level_state_and_dispatch::<Traits>,
@@ -423,12 +423,12 @@ impl State {
 
     #[inline(always)]
     pub unsafe fn enter_cpu_lock<Traits: PortInstance>(&self) {
-        unsafe { pp_asm!("mvtipl #15", options(preserves_flags, nostack)) };
+        unsafe { pp_asm!("clrpsw i", options(preserves_flags, nostack)) };
     }
 
     #[inline(always)]
     pub unsafe fn leave_cpu_lock<Traits: PortInstance>(&'static self) {
-        unsafe { pp_asm!("mvtipl #0", options(preserves_flags, nostack)) };
+        unsafe { pp_asm!("setpsw i", options(preserves_flags, nostack)) };
     }
 
     pub unsafe fn initialize_task_state<Traits: PortInstance>(
@@ -501,13 +501,12 @@ impl State {
 
     #[inline(always)]
     pub fn is_cpu_lock_active<Traits: PortInstance>(&self) -> bool {
-        // FIXME: The hardware interrupt entry sequence raises `IPL`, so this
-        // will return an incorrect value in an interupt handler
-        (psw::read() & psw::IPL_MASK) != 0
+        (psw::read() & psw::I) == 0
     }
 
     pub fn is_task_context<Traits: PortInstance>(&self) -> bool {
-        (psw::read() & psw::I) != 0
+        // Check only the lowest bit of `PSW.IPL` for optimization
+        (psw::read() & (1 << psw::IPL_SHIFT)) == 0
     }
 
     #[inline]
@@ -529,6 +528,7 @@ impl State {
     /// - `PSW.U == 0` (ISP selected)
     /// - `PSW.I == 0` (interrupts disabled)
     /// - `PSW.PM == 0`
+    /// - `PSW.IPL != 0`
     /// - `fl_handler` == `*isp[0]` contains a pointer to a first-level interrupt handler.
     /// - `saved_pc` == `isp[1]` contains the return target.
     /// - `saved_psw` == `isp[2]` contains the saved PSW.
@@ -570,7 +570,10 @@ impl State {
                 #   isp += 1;
                 #
                 pop r1
+                                            # Enter an interrupt context.
+                                            mvtipl #15
                 mov [r1], r1
+                                            setpsw i
 
                 # Call the first-level interrupt handler.
                 #
@@ -619,7 +622,7 @@ impl State {
             2:
                 # Enter a dispatcher context and jump to
                 # `push_second_level_state_and_dispatch`.
-                mvtipl #15
+                clrpsw i
                 bra _{push_second_level_state_and_dispatch}
 
             1:      # ReturnToBackgroundContext
