@@ -26,6 +26,8 @@ unsafe extern "C" fn unhandled_exception() -> ! {
 // Startup
 // -----------------------------------------------------------------------
 
+use rx_supplementary_builtins as _;
+
 #[no_mangle]
 #[link_section = ".text.start"]
 #[naked]

@@ -150,6 +150,7 @@ dependencies = [
  "r3_kernel",
  "r3_port_rx",
  "rsrx",
+ "rx_supplementary_builtins",
  "tock-registers",
 ]
 
@@ -160,6 +161,7 @@ dependencies = [
  "r3",
  "r3_kernel",
  "r3_port_rx",
+ "rx_supplementary_builtins",
 ]
 
 [[package]]
@@ -210,6 +212,10 @@ version = "0.0.0"
 dependencies = [
  "tock-registers",
 ]
+
+[[package]]
+name = "rx_supplementary_builtins"
+version = "0.0.0"
 
 [[package]]
 name = "seq-macro"
