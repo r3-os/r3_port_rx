@@ -2,14 +2,22 @@ use core::{cell::UnsafeCell, mem::MaybeUninit, slice};
 use r3_core::{
     kernel::{
         traits, ClearInterruptLineError, EnableInterruptLineError, InterruptNum, InterruptPriority,
-        PendInterruptLineError, QueryInterruptLineError, SetInterruptLinePriorityError,
+        PendInterruptLineError, QueryInterruptLineError,
     },
     utils::Init,
 };
 use r3_kernel::{KernelTraits, Port, PortToKernel, System, TaskCb};
 use r3_portkit::pptext::pp_asm;
+use rsrx::icua;
+use tock_registers::{
+    fields::FieldValue,
+    interfaces::{ReadWriteable, Readable, Writeable},
+};
 
-use crate::ThreadingOptions;
+use crate::{
+    SetInterruptGroupPriorityError, ThreadingOptions, Timer, INTERRUPT_NUM_RANGE,
+    INTERRUPT_PRIORITY_RANGE,
+};
 
 /// Implemented on a kernel trait type by [`use_port!`].
 ///
@@ -17,9 +25,32 @@ use crate::ThreadingOptions;
 ///
 /// Only meant to be implemented by [`use_port!`].
 pub unsafe trait PortInstance:
-    KernelTraits + Port<PortTaskState = TaskState> + ThreadingOptions
+    KernelTraits + Port<PortTaskState = TaskState> + ThreadingOptions + Timer
 {
+    const IVT: ivt::Table = ivt::new_table::<Self>();
+    const ALL_INTERRUPT_LINES: [InterruptNum; 256] = {
+        let mut x = [0; 256];
+        let mut i = 0;
+        while i < 256 {
+            x[i] = i as InterruptNum;
+            i += 1;
+        }
+        x
+    };
 }
+
+pub mod ivt;
+
+trait PortInstanceExt: PortInstance {
+    #[inline(always)]
+    fn icu() -> &'static icua::Registers {
+        unsafe { &*(Self::ICU_BASE as *const icua::Registers) }
+    }
+}
+impl<T: PortInstance> PortInstanceExt for T {}
+
+/// Software interrupt line (pended by `ICU.SWINTR`)
+const INT_SWINT: InterruptNum = 27;
 
 /// Stores the value of `Traits::state().running_task_ptr()` so that it can
 /// be accessed in naked functions. This field is actually of type
@@ -31,27 +62,19 @@ static mut RUNNING_TASK_PTR: usize = 0;
 
 static mut DISPATCH_PENDING: bool = false;
 
-#[export_name = "r3_port_rx_INTERRUPTS"]
-static INTERRUPTS: [unsafe extern "C" fn(); 256] = {
-    // TODO
-    #[naked]
-    unsafe extern "C" fn noop_int_handler() {
-        unsafe { pp_asm!("rte", options(noreturn)) };
-    }
-    [noop_int_handler; 256]
-};
-
 #[used]
 static mut DUMMY: usize = 0;
 
 /// Processor Status Word
+#[allow(dead_code)]
 mod psw {
     /// `PSW.I` - Interrpt enable bit
     pub const I: u32 = 1 << 16;
     /// `PSW.U` - Stack pointer select bit
     pub const U: u32 = 1 << 17;
     /// `PSW.IPL` - Processor interrupt priority level
-    pub const IPL_MASK: u32 = 0b1111;
+    pub const IPL_MASK: u32 = 0b1111 << IPL_SHIFT;
+    pub const IPL_SHIFT: u32 = 24;
 
     // FIXME: Register operands aren't supported for cg_gcc + RX
     #[cfg(any())]
@@ -130,8 +153,13 @@ impl State {
             DUMMY = Self::push_second_level_state_and_dispatch::<Traits> as usize
                 + Self::idle_task::<Traits> as usize
                 + Self::choose_and_get_next_task::<Traits> as usize
-                + Self::yield_cpu_inner::<Traits> as usize;
+                + Self::yield_cpu_inner::<Traits> as usize
+                + Self::zl_handler_stage2::<Traits> as usize
+                + ivt::keep_handlers::<Traits>();
         }
+
+        // Safety: We are the port, so it's okay to call this
+        unsafe { <Traits as Timer>::init() };
 
         // Safety: We are a port, so it's okay to call this
         unsafe {
@@ -178,10 +206,9 @@ impl State {
                 # Zero SP
                 mov #0, r0
 
-                # Transition to a task context
+                # Transition to a task context. Note that `wait` automatically
+                # sets `PSW.I`.
                 mvtipl #0
-                setpsw i
-
             0:
                 wait
                 bra 0b
@@ -226,15 +253,16 @@ impl State {
 
                 # If we are in an interrupt context, pend dispatch and return.
                 #
-                #   if PSW.I:
+                #   <PSW.IPL is 0 | 15>
+                #   if PSW.IPL == 15:
                 #       goto InInterruptContext
                 #
                 mvfc psw, r14
-                tst #{PSW_I}, r14
+                btst #{PSW_IPL_SHIFT}, r14
                 bne 0f
 
                 # Enter a dispatcher context
-                mvtipl #15
+                clrpsw i
 
                 # Push the rest of the first level context state.
                 pushm r1-r5
@@ -244,9 +272,8 @@ impl State {
 
             0:              # InInterruptContext
                 #
-                #   if PSW.I:
-                #       DISPATCH_PENDING = true
-                #       return
+                #   DISPATCH_PENDING = true
+                #   return
                 #
                 mov #_{DISPATCH_PENDING}, r14
                 mov.b #1, [r14]
@@ -254,7 +281,7 @@ impl State {
                 add #4, r0
                 rte
                 ",
-                PSW_I = const psw::I,
+                PSW_IPL_SHIFT = const psw::IPL_SHIFT,
                 DISPATCH_PENDING = sym DISPATCH_PENDING,
                 push_second_level_state_and_dispatch =
                     sym Self::push_second_level_state_and_dispatch::<Traits>,
@@ -313,6 +340,7 @@ impl State {
 
                 #   r1 = running_task;
                 mov #_{RUNNING_TASK_PTR}, r1
+                mov [r1], r1
                 mov [r1], r1
 
                 # Push the second-level context state.
@@ -395,12 +423,12 @@ impl State {
 
     #[inline(always)]
     pub unsafe fn enter_cpu_lock<Traits: PortInstance>(&self) {
-        unsafe { pp_asm!("mvtipl #15", options(preserves_flags, nostack)) };
+        unsafe { pp_asm!("clrpsw i", options(preserves_flags, nostack)) };
     }
 
     #[inline(always)]
     pub unsafe fn leave_cpu_lock<Traits: PortInstance>(&'static self) {
-        unsafe { pp_asm!("mvtipl #0", options(preserves_flags, nostack)) };
+        unsafe { pp_asm!("setpsw i", options(preserves_flags, nostack)) };
     }
 
     pub unsafe fn initialize_task_state<Traits: PortInstance>(
@@ -473,11 +501,12 @@ impl State {
 
     #[inline(always)]
     pub fn is_cpu_lock_active<Traits: PortInstance>(&self) -> bool {
-        (psw::read() & psw::IPL_MASK) != 0
+        (psw::read() & psw::I) == 0
     }
 
     pub fn is_task_context<Traits: PortInstance>(&self) -> bool {
-        (psw::read() & psw::I) != 0
+        // Check only the lowest bit of `PSW.IPL` for optimization
+        (psw::read() & (1 << psw::IPL_SHIFT)) == 0
     }
 
     #[inline]
@@ -492,12 +521,137 @@ impl State {
         unsafe { RUNNING_TASK_PTR != 0 }
     }
 
-    pub fn set_interrupt_line_priority<Traits: PortInstance>(
-        &'static self,
-        num: InterruptNum,
-        priority: InterruptPriority,
-    ) -> Result<(), SetInterruptLinePriorityError> {
-        todo!()
+    /// The zeroth-level, second-stage interrupt handler.
+    ///
+    /// # Safety
+    ///
+    /// - `PSW.U == 0` (ISP selected)
+    /// - `PSW.I == 0` (interrupts disabled)
+    /// - `PSW.PM == 0`
+    /// - `PSW.IPL != 0`
+    /// - `fl_handler` == `*isp[0]` contains a pointer to a first-level interrupt handler.
+    /// - `saved_pc` == `isp[1]` contains the return target.
+    /// - `saved_psw` == `isp[2]` contains the saved PSW.
+    ///
+    #[naked]
+    unsafe extern "C" fn zl_handler_stage2<Traits: PortInstance>() -> ! {
+        unsafe {
+            pp_asm!(
+                "
+                # [ref:rx_no_nested_interrupts] implies the background context
+                # is always a task context (`saved_psw.U == 1`).
+                #
+                # Set `PSW.U` to examine `usp` and determine if the background
+                # context is an idle task. If so, skip the stacking of FLS.
+                #
+                #   if usp == 0:
+                #       <running_task is None>
+                #       goto FLSSaved
+                #
+                #   <running_task is Some(_)>
+                #
+                setpsw u
+                cmp #0, r0
+                beq 0f
+
+                # Save the FLS except for `(pc, psw)` to the task stack.
+                sub #8, r0
+                pushm r14-r15
+                pushm r1-r5
+                pushc fpsw
+
+            0:      # FLSSaved
+                # Switch back to `isp`.
+                clrpsw u
+
+                # Get the first-level interrupt handler.
+                #
+                #   let fl_handler = *isp[0];
+                #   isp += 1;
+                #
+                pop r1
+                                            # Enter an interrupt context.
+                                            mvtipl #15
+                mov [r1], r1
+                                            setpsw i
+
+                # Call the first-level interrupt handler.
+                #
+                #   <interrupt context && CPU Lock inactive>
+                #   fl_handler();
+                #
+                jsr r1
+
+                # [ref:rx_no_nested_interrupts] again implies the background
+                # context is always a task context (`saved_psw.U == 1`).
+                #
+                # [ref:flexible_unmanaged_interrupts] implies this is a managed
+                # interrupt handler, and thus it's always possible that it may
+                # set `DISPATCH_PENDING`.
+                #
+                # Is there a pending dispatch request?
+                #
+                #   if replace(&mut DISPATCH_PENDING, false) == false:
+                #       goto ReturnToBackgroundContext
+                #
+                mov #_{DISPATCH_PENDING}, r1
+                mov #0, r2
+                cmp [r1].ub, r2
+                beq 1f
+
+                # There's a pending dispatch request. Clear the request.
+                mov.b r2, [r1]
+
+                # Get `(saved_pc, saved_psw)`.
+                popm r1-r2
+
+                # Complete the saved FLS by storing `(saved_pc, saved_psw)`
+                # if the background context is not an idle task.
+                #
+                #   if usp != 0:
+                #       <running_task is Some(_)>
+                #       fls.pc = saved_pc;
+                #       fls.psw = saved_psw;
+                #
+                setpsw u
+                cmp #0, r0
+                beq 2f
+                mov r1, (8 * 4)[r0]
+                mov r2, (9 * 4)[r0]
+
+            2:
+                # Enter a dispatcher context and jump to
+                # `push_second_level_state_and_dispatch`.
+                clrpsw i
+                bra _{push_second_level_state_and_dispatch}
+
+            1:      # ReturnToBackgroundContext
+                # Restore the FLS from the task stack if the background context
+                # is not an idle task.
+                setpsw u
+                cmp #0, r0
+                beq 2f
+                popc fpsw
+                popm r1-r5
+                popm r14-r15
+                add #8, r0
+
+            2:
+                # Return to the background context.
+                #
+                #   pc = saved_pc;
+                #   psw = saved_psw;
+                #   isp += 2;
+                #
+                clrpsw u
+                rte
+                ",
+                DISPATCH_PENDING = sym DISPATCH_PENDING,
+                push_second_level_state_and_dispatch =
+                    sym Self::push_second_level_state_and_dispatch::<Traits>,
+                options(noreturn),
+            );
+        }
     }
 
     #[inline]
@@ -505,7 +659,12 @@ impl State {
         &'static self,
         num: InterruptNum,
     ) -> Result<(), EnableInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(EnableInterruptLineError::BadParam)
+        } else {
+            Traits::icu().ier[num / 8].modify(FieldValue::<u8, _>::new(1, num % 8, 1));
+            Ok(())
+        }
     }
 
     #[inline]
@@ -513,7 +672,12 @@ impl State {
         &self,
         num: InterruptNum,
     ) -> Result<(), EnableInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(EnableInterruptLineError::BadParam)
+        } else {
+            Traits::icu().ier[num / 8].modify(FieldValue::<u8, _>::new(1, num % 8, 0));
+            Ok(())
+        }
     }
 
     #[inline]
@@ -521,7 +685,14 @@ impl State {
         &'static self,
         num: InterruptNum,
     ) -> Result<(), PendInterruptLineError> {
-        todo!()
+        if num == INT_SWINT {
+            Traits::icu()
+                .swintr
+                .write(icua::SoftwareInterruptActivation::SWINT::SET);
+            Ok(())
+        } else {
+            Err(PendInterruptLineError::BadParam)
+        }
     }
 
     #[inline]
@@ -529,7 +700,12 @@ impl State {
         &self,
         num: InterruptNum,
     ) -> Result<(), ClearInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(ClearInterruptLineError::BadParam)
+        } else {
+            Traits::icu().ir[num].set(1);
+            Ok(())
+        }
     }
 
     #[inline]
@@ -537,7 +713,16 @@ impl State {
         &self,
         num: InterruptNum,
     ) -> Result<bool, QueryInterruptLineError> {
-        todo!()
+        if !INTERRUPT_NUM_RANGE.contains(&num) {
+            Err(QueryInterruptLineError::BadParam)
+        } else {
+            match Traits::icu().ir[num].get() {
+                0 => Ok(false),
+                1 => Ok(true),
+                // Safety: `IR[1..8]` is guaranteed to read as zeros
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+        }
     }
 }
 
@@ -549,9 +734,33 @@ pub const fn validate<Traits: PortInstance>() {
         "`CPU_LOCK_PRIORITY_MASK` having a value other than `15` is not supported yet"
     );
 
-    // [tag:rx_nested_interrupts]
+    // [tag:rx_no_nested_interrupts]
     assert!(
         !Traits::SUPPORT_NESTING,
         "nested interrupts aren't supported yet"
     );
+}
+
+unsafe impl<Traits: PortInstance> super::cfg::Icu for Traits {
+    fn set_interrupt_group_priority(
+        num: usize,
+        priority: InterruptPriority,
+    ) -> Result<(), SetInterruptGroupPriorityError> {
+        let ipr = Self::icu()
+            .ipr
+            .get(num)
+            .ok_or(SetInterruptGroupPriorityError::BadParam)?;
+
+        if !INTERRUPT_PRIORITY_RANGE.contains(&priority) {
+            return Err(SetInterruptGroupPriorityError::BadParam);
+        }
+
+        if Traits::is_interrupt_context() {
+            return Err(SetInterruptGroupPriorityError::BadContext);
+        }
+
+        ipr.set(priority as u8);
+
+        Ok(())
+    }
 }

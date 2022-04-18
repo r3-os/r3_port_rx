@@ -19,3 +19,8 @@ r3_portkit = { version = "0.2.1" }
 r3_kernel = { version = "0.1.2" }
 r3_core = { version = "0.1.2" }
 
+rsrx = { path = "../rsrx" }
+
+tock-registers = "0.7.0"
+seq-macro = { version = "0.3.0" }
+

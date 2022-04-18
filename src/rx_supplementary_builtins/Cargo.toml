@@ -1,0 +1,8 @@
+[package]
+name = "rx_supplementary_builtins"
+description = "Provides missing compile runtime routines for RX target"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[dependencies]

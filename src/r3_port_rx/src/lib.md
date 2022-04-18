@@ -24,16 +24,16 @@ This port doesn't support detecting stack overflow.
 
 *Case 1:* `CPU_LOCK_PRIORITY_MASK == 15 && SUPPORT_NESTING == false`
 
-The hardware exception entry sequence clears `PSW.I`. This case exploits this property. CPU Lock is implemented by `PSW.IPL`.
+CPU Lock is implemented by `PSW.I`. `PSW.IPL` is updated on interrupt entry to disable nested interrupts. Setting `PSW.IPL != 0` in a boot context simplifies `is_task_context`.
 
 |   Context   | CPU Lock | `PSW.I` | `PSW.IPL` | `PSW.U` |
 | ----------- | -------- | ------- | --------- | ------- |
 | Boot        | Active   | `0`     | `15`      | `?`     |
 | Task        | Inactive | `1`     | `0`       | `1`     |
-| Task        | Active   | `1`     | `15`      | `1`     |
-| Interrupt   | Inactive | `0`     | `0`       | `0`     |
+| Task        | Active   | `0`     | `0`       | `1`     |
+| Interrupt   | Inactive | `1`     | `15`      | `0`     |
 | Interrupt   | Active   | `0`     | `15`      | `0`     |
-| Dispatcher¹ | Active   |         | `15`      | `1`     |
+| Dispatcher¹ | Active   | `0`     |           | `1`     |
 
 *Case 2:* `CPU_LOCK_PRIORITY_MASK != 15 && SUPPORT_NESTING == false`
 
@@ -50,11 +50,11 @@ The hardware exception entry sequence clears `PSW.I`. This case exploits this pr
 
 *Case 3:* `CPU_LOCK_PRIORITY_MASK == 15 && SUPPORT_NESTING == true`
 
-CPU Lock is implemented by `PSW.I`.
+CPU Lock is implemented by `PSW.I`. Setting `PSW.IPL != 0` in a boot context simplifies `is_task_context`.
 
 |   Context   | CPU Lock | `PSW.I` |      `PSW.IPL`       |  `PSW.U`   |
 | ----------- | -------- | ------- | -------------------- | ---------- |
-| Boot        | Active   | `0`     | `0`                  | See Case 1 |
+| Boot        | Active   | `0`     | `15`                 | See Case 1 |
 | Task        | Inactive | `1`     | `0`                  | See Case 1 |
 | Task        | Active   | `0`     | `0`                  | See Case 1 |
 | Interrupt   | Inactive | `1`     | `interrupt_priority` | See Case 1 |
@@ -83,7 +83,7 @@ The state of an interrupted thread is stored to the interrupted thread's stack i
 ```rust,ignore
 #[repr(C)]
 struct ContextState {
-    // Second-level state
+    // Second-level state (SLS)
     //
     // Includes everything that is not included in the first-level state. These
     // are moved between memory and registers only when switching tasks.
@@ -99,7 +99,7 @@ struct ContextState {
     r13: u32,
     // TODO: `dr: [f64; 16]`, DPSW, etc. (RXv3)
 
-    // First-level state
+    // First-level state (FLS)
     //
     // The GPR potion is comprised of caller-saved registers. In an exception
     // handler, saving/restoring this set of registers at entry and exit allows

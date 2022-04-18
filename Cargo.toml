@@ -4,6 +4,7 @@ members = [
     "examples/basic_qemu_rx",
     "src/r3_port_rx",
     "src/rsrx",
+    "src/rx_supplementary_builtins",
 ]
 
 

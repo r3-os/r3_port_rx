@@ -1,9 +1,12 @@
-use core::ops::Range;
-use r3_core::kernel::{InterruptNum, InterruptPriority};
+use core::{fmt, ops::Range};
+use r3_core::kernel::{InterruptNum, InterruptPriority, ResultCode};
 
 // TODO: "Fast interrupts"
-/// The valid interrupt priority values.
-pub const INTERRUPT_PRIORITY_RANGE: Range<InterruptPriority> = 1..16;
+/// The valid interrupt group priority values.
+///
+/// Note that the value `0` (lowest) disables interrupts unless the
+/// corresponding interrupt line is designated as "fast interrupts".
+pub const INTERRUPT_PRIORITY_RANGE: Range<InterruptPriority> = 0..16;
 
 /// The range of valid `InterruptNum`s.
 pub const INTERRUPT_NUM_RANGE: Range<InterruptNum> = 16..256;
@@ -26,6 +29,10 @@ pub trait ThreadingOptions {
     /// Enables the use of the `wait` instruction in the idle task to save power.
     /// Defaults to `true`.
     const USE_WAIT: bool = true;
+
+    /// The base address of the memory-mapped registers exposed by Interrupt
+    /// Control Unit (ICUa or compatible). The default value is `0x0008_7000`.
+    const ICU_BASE: *mut () = 0x0008_7000 as _;
 }
 
 /// Defines the entry points of a port instantiation. Implemented by
@@ -61,8 +68,62 @@ pub unsafe trait EntryPoint {
     unsafe fn start() -> !;
 }
 
+/// Provides access to a system-global ICU instance. Indirectly implemented by
+/// [`use_port!`].
+///
+/// # Safety
+///
+/// This trait is not intended to be implemented in any other means.
+pub unsafe trait Icu {
+    fn set_interrupt_group_priority(
+        num: usize,
+        priority: InterruptPriority,
+    ) -> Result<(), SetInterruptGroupPriorityError>;
+}
+
+/// Error type for [`Icu::set_interrupt_group_priority`][].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(i8)]
+pub enum SetInterruptGroupPriorityError {
+    /// The current context is not a task or boot context.
+    ///
+    /// <div class="admonition-follows"></div>
+    ///
+    /// > **Rationale:** When taking an interrupt, the hardware interrupt
+    /// > handling sequence updates `IPL` to mask lower-priority interrupts.
+    /// > After handling an interrupt, the interrupt handler must update `IPL`
+    /// > according to the configured priority levels of all remaining active
+    /// > interrupts.
+    /// > With fixed interrupt priorities, calculating the new value of `IPL`
+    /// > becomes as trivial as restoring the old value of `IPL` from the
+    /// > exception frame.
+    // TODO: #[doc = include_str!("../common.md")]
+    BadContext = ResultCode::BadContext as _,
+    /// The specified interrupt group number or the specified priority value is
+    /// out of range.
+    BadParam = ResultCode::BadParam as _,
+}
+
+impl From<SetInterruptGroupPriorityError> for ResultCode {
+    #[inline]
+    fn from(x: SetInterruptGroupPriorityError) -> Self {
+        match x {
+            SetInterruptGroupPriorityError::BadContext => Self::BadContext,
+            SetInterruptGroupPriorityError::BadParam => Self::BadParam,
+        }
+    }
+}
+
+impl fmt::Debug for SetInterruptGroupPriorityError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        ResultCode::from(*self).fmt(f)
+    }
+}
+
 /// Instantiate the port. Implements the port traits ([`PortThreading`], etc.)
 /// and [`EntryPoint`].
+/// **Requires [`ThreadingOptions`][] and [`Timer`][].**
 ///
 /// This macro doesn't provide an implementation of [`PortTimer`], which you
 /// must supply one through other ways.
@@ -71,14 +132,21 @@ pub unsafe trait EntryPoint {
 ///
 /// [`PortThreading`]: r3_kernel::PortThreading
 /// [`PortTimer`]: r3_kernel::PortTimer
+/// [`Timer`]: r3_kernel::Timer
+/// [`Timer`]: r3_kernel::Timer
 ///
 /// # Safety
 ///
 ///  - The target must really be a bare-metal RX environment.
+///
 ///  - You shouldn't interfere with the port's operrations. For example, you
 ///    shouldn't manually modify `IPL` or `INTB` unless you know what you are
 ///    doing.
 ///  - Other components should not execute the `int` instruction.
+///
+///  - [`ThreadingOptions::ICU_BASE`][] must be the valid base address of
+///    Interrupt Control Unit (ICU). Application code shouldn't interfere with
+///    the port's interaction with ICU.
 ///
 #[macro_export]
 macro_rules! use_port {
@@ -102,6 +170,11 @@ macro_rules! use_port {
 
             static PORT_STATE: State = $crate::core::default::Default::default();
 
+            #[export_name = "r3_port_rx_INTERRUPTS"]
+            #[used]
+            static INTERRUPTS: $crate::threading::imp::ivt::Table =
+                <$Traits as PortInstance>::IVT;
+
             unsafe impl PortInstance for $Traits {}
 
             // Assume `$Traits: KernelTraits`
@@ -111,7 +184,7 @@ macro_rules! use_port {
                 const PORT_TASK_STATE_INIT: Self::PortTaskState =
                     $crate::r3_core::utils::Init::INIT;
 
-                const STACK_DEFAULT_SIZE: usize = 1024;
+                const STACK_DEFAULT_SIZE: usize = 2048;
 
                 // FIXME: Couldn't find any description on the stack alignment requirement
                 const STACK_ALIGN: usize = 4;
@@ -168,15 +241,8 @@ macro_rules! use_port {
             }
 
             unsafe impl PortInterrupts for $Traits {
-                const MANAGED_INTERRUPT_PRIORITY_RANGE: Range<InterruptPriority> =
-                    0..(<$Traits as ThreadingOptions>::CPU_LOCK_PRIORITY_MASK as InterruptPriority + 1);
-
-                unsafe fn set_interrupt_line_priority(
-                    line: InterruptNum,
-                    priority: InterruptPriority,
-                ) -> Result<(), SetInterruptLinePriorityError> {
-                    PORT_STATE.set_interrupt_line_priority::<Self>(line, priority)
-                }
+                const MANAGED_INTERRUPT_LINES: &'static [InterruptNum] =
+                    &<$Traits as PortInstance>::ALL_INTERRUPT_LINES;
 
                 unsafe fn enable_interrupt_line(line: InterruptNum) -> Result<(), EnableInterruptLineError> {
                     PORT_STATE.enable_interrupt_line::<Self>(line)
