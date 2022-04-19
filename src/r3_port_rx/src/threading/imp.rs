@@ -151,7 +151,6 @@ impl State {
         //        <https://github.com/rust-lang/rustc_codegen_gcc/issues/157>
         unsafe {
             DUMMY = Self::push_second_level_state_and_dispatch::<Traits> as usize
-                + Self::idle_task::<Traits> as usize
                 + Self::choose_and_get_next_task::<Traits> as usize
                 + Self::yield_cpu_inner::<Traits> as usize
                 + Self::zl_handler_stage2::<Traits> as usize
@@ -187,34 +186,6 @@ impl State {
                     sym Self::push_second_level_state_and_dispatch::<Traits>,
                 options(noreturn),
             )
-        }
-    }
-
-    ///
-    /// Reset MSP to `interrupt_stack_top()`, release CPU Lock, and start
-    /// executing the idle loop.
-    ///
-    /// # Safety
-    ///
-    /// Dispatcher context.
-    #[inline(never)]
-    unsafe extern "C" fn idle_task<Traits: PortInstance>() -> ! {
-        // TODO: Use `Traits::USE_WAIT`
-        unsafe {
-            pp_asm!(
-                "
-                # Zero SP
-                mov #0, r0
-
-                # Transition to a task context. Note that `wait` automatically
-                # sets `PSW.I`.
-                mvtipl #0
-            0:
-                wait
-                bra 0b
-                ",
-                options(noreturn)
-            );
         }
     }
 
@@ -307,7 +278,7 @@ impl State {
     ///  - **`dispatch:`** (alternate entry point)
     ///     - Call [`r3_kernel::PortToKernel::choose_running_task`].
     ///     - Restore SP from the next scheduled task's `TaskState`.
-    ///  - If there's no task to schedule, branch to [`Self::idle_task`].
+    ///  - If there's no task to schedule, branch to the idle task.
     ///  - Pop the second-level state of the next scheduled task.
     ///  - **`pop_first_level_state:`** (alternate entry point)
     ///     - Pop the first-level state of the next scheduled task.
@@ -366,12 +337,12 @@ impl State {
                 #
                 #    <r1 = running_task>
                 #    if r1.is_none():
-                #        goto idle_task;
+                #        goto IdleTask;
                 #
                 #    usp = r1.port_task_state.sp
                 #
                 cmp #0, r1
-                beq _{idle_task}
+                beq 2f
                 mov [r1], r0
 
                 # Pop the second-level context state.
@@ -394,11 +365,26 @@ impl State {
                 #
                 mvfc isp, r0
                 bra 1b
+
+                # Although it's never used in the program, export this symbol
+                # to aid with debugging
+                .global _{push_second_level_state_and_dispatch}.idle_task
+            _{push_second_level_state_and_dispatch}.idle_task:
+            2:      # IdleTask
+                # Zero SP
+                mov #0, r0
+
+                # Transition to a task context. Note that `wait` automatically
+                # sets `PSW.I`.
+                mvtipl #0
+            0:
+                # TODO: Consider `Traits::USE_WAIT`
+                wait
+                bra 0b
             ",
                 choose_and_get_next_task = sym Self::choose_and_get_next_task::<Traits>,
                 push_second_level_state_and_dispatch =
                     sym Self::push_second_level_state_and_dispatch::<Traits>,
-                idle_task = sym Self::idle_task::<Traits>,
                 RUNNING_TASK_PTR = sym RUNNING_TASK_PTR,
                 options(noreturn),
             );
