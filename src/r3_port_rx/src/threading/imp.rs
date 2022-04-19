@@ -153,7 +153,7 @@ impl State {
             DUMMY = Self::push_second_level_state_and_dispatch::<Traits> as usize
                 + Self::choose_and_get_next_task::<Traits> as usize
                 + Self::yield_cpu_inner::<Traits> as usize
-                + Self::zl_handler_stage2::<Traits> as usize
+                + Self::fl_handler_stage2::<Traits> as usize
                 + ivt::keep_handlers::<Traits>();
         }
 
@@ -507,7 +507,7 @@ impl State {
         unsafe { RUNNING_TASK_PTR != 0 }
     }
 
-    /// The zeroth-level, second-stage interrupt handler.
+    /// The first-level, second-stage interrupt handler.
     ///
     /// # Safety
     ///
@@ -515,12 +515,13 @@ impl State {
     /// - `PSW.I == 0` (interrupts disabled)
     /// - `PSW.PM == 0`
     /// - `PSW.IPL != 0`
-    /// - `fl_handler` == `*isp[0]` contains a pointer to a first-level interrupt handler.
+    /// - `sl_handler` == `*isp[0]` contains a pointer to a second-level
+    ///   interrupt handler.
     /// - `saved_pc` == `isp[1]` contains the return target.
     /// - `saved_psw` == `isp[2]` contains the saved PSW.
     ///
     #[naked]
-    unsafe extern "C" fn zl_handler_stage2<Traits: PortInstance>() -> ! {
+    unsafe extern "C" fn fl_handler_stage2<Traits: PortInstance>() -> ! {
         unsafe {
             pp_asm!(
                 "
@@ -550,9 +551,9 @@ impl State {
                 # Switch back to `isp`.
                 clrpsw u
 
-                # Get the first-level interrupt handler.
+                # Get the second-level interrupt handler.
                 #
-                #   let fl_handler = *isp[0];
+                #   let sl_handler = *isp[0];
                 #   isp += 1;
                 #
                 pop r1
@@ -561,10 +562,10 @@ impl State {
                 mov [r1], r1
                                             setpsw i
 
-                # Call the first-level interrupt handler.
+                # Call the second-level interrupt handler.
                 #
                 #   <interrupt context && CPU Lock inactive>
-                #   fl_handler();
+                #   sl_handler();
                 #
                 jsr r1
 
