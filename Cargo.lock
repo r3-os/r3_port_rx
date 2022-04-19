@@ -191,6 +191,7 @@ dependencies = [
  "r3_portkit",
  "rsrx",
  "seq-macro",
+ "staticvec",
  "tock-registers",
 ]
 
@@ -228,6 +229,12 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "staticvec"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae3e43abc1fd6cdf62877dcc7575f847ceb2389db8b84bfabacee458d77b1bf2"
 
 [[package]]
 name = "svgbobdoc"

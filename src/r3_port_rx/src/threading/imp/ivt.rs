@@ -20,15 +20,29 @@ pub(super) const fn new_table<Traits: PortInstance>() -> Table {
 /// <https://github.com/rust-lang/rustc_codegen_gcc/issues/157>
 #[inline]
 pub(super) fn keep_handlers<Traits: PortInstance>() -> usize {
-    let mut i = 0;
+    use core::mem::ManuallyDrop;
+    use r3_core::{kernel::interrupt::InterruptHandlerFn, utils::Frozen};
+    use staticvec::StaticVec;
 
-    seq_macro::seq!(I in 0..256 {
-        if Traits::INTERRUPT_HANDLERS.get(I).is_some() {
-            i += sl_handler_trampoline::<Traits, I> as usize;
-        }
-    });
+    trait Inner {
+        const FNS: &'static [Frozen<InterruptHandlerFn>];
+    }
 
-    i
+    impl<Traits: PortInstance> Inner for Traits {
+        const FNS: &'static [Frozen<InterruptHandlerFn>] = {
+            let fns: StaticVec<InterruptHandlerFn, 256> = StaticVec::new();
+            // FIXME: `StaticVec: !~const Destruct`
+            let mut fns = ManuallyDrop::new(fns);
+            seq_macro::seq!(I in 0..256 {
+                if Traits::INTERRUPT_HANDLERS.get(I).is_some() {
+                    fns.push(sl_handler_trampoline::<Traits, I>);
+                }
+            });
+            Frozen::leak_slice(&fns)
+        };
+    }
+
+    <Traits as Inner>::FNS.as_ptr() as usize
 }
 
 #[naked]
