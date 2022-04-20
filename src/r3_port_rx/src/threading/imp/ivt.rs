@@ -64,8 +64,23 @@ unsafe extern "C" fn fl_handler_stage1<Traits: PortInstance, const I: usize>() -
 }
 
 unsafe extern "C" fn sl_handler_trampoline<Traits: PortInstance, const I: usize>() {
-    // Very likely to be devirtualized and hopefully be inlined
-    unsafe { Traits::INTERRUPT_HANDLERS.get(I).unwrap()() }
+    // I hoped that this would be devirtualized and inlined, but neither
+    // did happen
+    //     unsafe { Traits::INTERRUPT_HANDLERS.get(I).unwrap()() }
+
+    use r3_core::kernel::interrupt::InterruptHandlerFn;
+
+    trait Inner<const I: usize> {
+        const FN: InterruptHandlerFn;
+    }
+
+    impl<Traits: PortInstance, const I: usize> Inner<I> for Traits {
+        const FN: InterruptHandlerFn = Traits::INTERRUPT_HANDLERS.get(I).unwrap_or(noop as _);
+    }
+
+    extern "C" fn noop() {}
+
+    unsafe { <Traits as Inner<I>>::FN() }
 }
 
 unsafe extern "C" fn unhandled_interrupt() -> ! {
