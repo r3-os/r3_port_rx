@@ -8,6 +8,7 @@
 #![feature(const_mut_refs)]
 #![feature(slice_ptr_len)]
 #![feature(const_option)]
+#![feature(inline_const)]
 #![feature(const_deref)]
 #![feature(decl_macro)]
 #![feature(asm_const)]

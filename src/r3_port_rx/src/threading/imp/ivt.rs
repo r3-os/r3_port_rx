@@ -24,25 +24,19 @@ pub(super) fn keep_handlers<Traits: PortInstance>() -> usize {
     use r3_core::{kernel::interrupt::InterruptHandlerFn, utils::Frozen};
     use staticvec::StaticVec;
 
-    trait Inner {
-        const FNS: &'static [Frozen<InterruptHandlerFn>];
+    const fn handlers<Traits: PortInstance>() -> &'static [Frozen<InterruptHandlerFn>] {
+        let fns: StaticVec<InterruptHandlerFn, 256> = StaticVec::new();
+        // FIXME: `StaticVec: !~const Destruct`
+        let mut fns = ManuallyDrop::new(fns);
+        seq_macro::seq!(I in 0..256 {
+            if Traits::INTERRUPT_HANDLERS.get(I).is_some() {
+                fns.push(sl_handler_trampoline::<Traits, I>);
+            }
+        });
+        Frozen::leak_slice(&fns)
     }
 
-    impl<Traits: PortInstance> Inner for Traits {
-        const FNS: &'static [Frozen<InterruptHandlerFn>] = {
-            let fns: StaticVec<InterruptHandlerFn, 256> = StaticVec::new();
-            // FIXME: `StaticVec: !~const Destruct`
-            let mut fns = ManuallyDrop::new(fns);
-            seq_macro::seq!(I in 0..256 {
-                if Traits::INTERRUPT_HANDLERS.get(I).is_some() {
-                    fns.push(sl_handler_trampoline::<Traits, I>);
-                }
-            });
-            Frozen::leak_slice(&fns)
-        };
-    }
-
-    <Traits as Inner>::FNS.as_ptr() as usize
+    const { handlers::<Traits>() }.as_ptr() as usize
 }
 
 #[naked]
@@ -68,19 +62,9 @@ unsafe extern "C" fn sl_handler_trampoline<Traits: PortInstance, const I: usize>
     // did happen
     //     unsafe { Traits::INTERRUPT_HANDLERS.get(I).unwrap()() }
 
-    use r3_core::kernel::interrupt::InterruptHandlerFn;
-
-    trait Inner<const I: usize> {
-        const FN: InterruptHandlerFn;
-    }
-
-    impl<Traits: PortInstance, const I: usize> Inner<I> for Traits {
-        const FN: InterruptHandlerFn = Traits::INTERRUPT_HANDLERS.get(I).unwrap_or(noop as _);
-    }
-
     extern "C" fn noop() {}
-
-    unsafe { <Traits as Inner<I>>::FN() }
+    const NOOP: unsafe extern "C" fn() = noop;
+    unsafe { const { Traits::INTERRUPT_HANDLERS.get(I).unwrap_or(NOOP) }() }
 }
 
 unsafe extern "C" fn unhandled_interrupt() -> ! {
