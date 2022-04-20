@@ -76,8 +76,6 @@ mod psw {
     pub const IPL_MASK: u32 = 0b1111 << IPL_SHIFT;
     pub const IPL_SHIFT: u32 = 24;
 
-    // FIXME: Register operands aren't supported for cg_gcc + RX
-    #[cfg(any())]
     #[inline]
     pub fn read() -> u32 {
         let psw: u32;
@@ -89,17 +87,6 @@ mod psw {
             );
         }
         psw
-    }
-
-    #[naked]
-    pub extern "C" fn read() -> u32 {
-        unsafe {
-            core::arch::asm!(
-                "mvfc psw, r1
-                rts",
-                options(noreturn),
-            );
-        }
     }
 }
 
