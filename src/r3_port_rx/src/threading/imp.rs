@@ -206,8 +206,8 @@ impl State {
         unsafe {
             pp_asm!(
                 "
-                # Push [r14..=15] early to make room for temporaries.
-                pushm r14-r15
+                # Push `r15` early to make room for temporaries.
+                push r15
 
                 # If we are in an interrupt context, pend dispatch and return.
                 #
@@ -215,14 +215,15 @@ impl State {
                 #   if PSW.IPL == 15:
                 #       goto InInterruptContext
                 #
-                mvfc psw, r14
-                btst #{PSW_IPL_SHIFT}, r14
+                mvfc psw, r15
+                btst #{PSW_IPL_SHIFT}, r15
                 bne 0f
 
                 # Enter a dispatcher context
                 clrpsw i
 
                 # Push the rest of the first level context state.
+                push r14
                 pushm r1-r5
                 pushc fpsw
 
@@ -233,10 +234,9 @@ impl State {
                 #   DISPATCH_PENDING = true
                 #   return
                 #
-                mov #_{DISPATCH_PENDING}, r14
-                mov.b #1, [r14]
-                pop r14
-                add #4, r0
+                mov #_{DISPATCH_PENDING}, r15
+                mov.b #1, [r15]
+                pop r15
                 rte
                 ",
                 PSW_IPL_SHIFT = const psw::IPL_SHIFT,
