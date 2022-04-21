@@ -71,7 +71,8 @@ mod psw {
     /// `PSW.I` - Interrpt enable bit
     pub const I: u32 = 1 << 16;
     /// `PSW.U` - Stack pointer select bit
-    pub const U: u32 = 1 << 17;
+    pub const U: u32 = 1 << U_SHIFT;
+    pub const U_SHIFT: u32 = 17;
     /// `PSW.IPL` - Processor interrupt priority level
     pub const IPL_MASK: u32 = 0b1111 << IPL_SHIFT;
     pub const IPL_SHIFT: u32 = 24;
@@ -211,13 +212,12 @@ impl State {
 
                 # If we are in an interrupt context, pend dispatch and return.
                 #
-                #   <PSW.IPL is 0 | 15>
-                #   if PSW.IPL == 15:
+                #   if PSW.U == 0:
                 #       goto InInterruptContext
                 #
                 mvfc psw, r15
-                btst #{PSW_IPL_SHIFT}, r15
-                bne 0f
+                btst #{PSW_U_SHIFT}, r15
+                beq 0f
 
                 # Enter a dispatcher context
                 clrpsw i
@@ -239,7 +239,7 @@ impl State {
                 pop r15
                 rte
                 ",
-                PSW_IPL_SHIFT = const psw::IPL_SHIFT,
+                PSW_U_SHIFT = const psw::U_SHIFT,
                 DISPATCH_PENDING = sym DISPATCH_PENDING,
                 push_second_level_state_and_dispatch =
                     sym Self::push_second_level_state_and_dispatch::<Traits>,
@@ -478,8 +478,7 @@ impl State {
     }
 
     pub fn is_task_context<Traits: PortInstance>(&self) -> bool {
-        // Check only the lowest bit of `PSW.IPL` for optimization
-        (psw::read() & (1 << psw::IPL_SHIFT)) == 0
+        (psw::read() & psw::U) != 0
     }
 
     #[inline]
