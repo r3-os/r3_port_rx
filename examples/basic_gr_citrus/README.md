@@ -4,6 +4,6 @@ Enter the USB mass storage loader mode by pressing the reset button on your boar
 
 ```shell
 rustc_codegen_gcc/cargo.sh build --release
-rx-elf-objcopy -O binary ../../target/rx-none-elf/release/r3_example_basic_gr_citrus /tmp/app.bin
+rx-none-elf-objcopy -O binary ../../target/rx-none-elf/release/r3_example_basic_gr_citrus /tmp/app.bin
 cp /tmp/app.bin /run/media/$USER/GR-CITRUS_b
 ```
